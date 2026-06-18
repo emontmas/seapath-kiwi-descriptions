@@ -21,7 +21,7 @@ log() {
     echo "[$SCRIPT_NAME] [$uplevel] $*"
 }
 
-ARGS=$(getopt -o "hse:p:" -l "add-sle,extra-build-args:,profile:" -n "build.sh" -- "$@")
+ARGS=$(getopt -o "hse:p:" -l "add-sle,add-sles-iso:,extra-build-args:,profile:" -n "build.sh" -- "$@")
 eval set -- "$ARGS"
 
 while true; do
@@ -34,6 +34,9 @@ Arguments:
 Options:
   -s, --add-sle             Add SLE repositories of local system to the built appliance.
                                 Relevant only for SLE-based appliances.
+      --add-sles-iso <iso-path> Add an SLES ISO to the built appliance. Packages will be fetched from
+                                    the iso instead of remote package repositories.
+                                    Relevant only for SLE-based appliances.
   -e, --extra-build-args    Extra arguments to pass to the 'kiwi system build' command.
   -p, --profile             Image profile to use. Can be specified multiple times for multiple profiles.
                             Valid profiles:
@@ -49,6 +52,10 @@ EOF
             log error "The --add-sle option is only relevant for SLE-based appliances. Ignoring."
         fi
         shift
+        ;;
+    --add-sles-iso)
+        ADD_SLES_ISO="$2"
+        shift 2
         ;;
     -e|--extra-build-args)
         KIWI_EXTRA_ARGS="$KIWI_EXTRA_ARGS $2"
@@ -87,6 +94,16 @@ for p in $KIWI_BUILD_PROFILES; do
     KIWI_GLOBAL_ARGS="$KIWI_GLOBAL_ARGS --profile $p"
 done
 
+
+if [ -n "$ADD_SLES_ISO" ]; then
+    log info "Adding SLES ISO $ADD_SLES_ISO to the built appliance."
+
+    sudo mkdir -p /mnt/sles-iso
+    sudo mount "$ADD_SLES_ISO" /mnt/sles-iso
+
+    KIWI_BUILD_ARGS="$KIWI_BUILD_ARGS --add-repo file:///mnt/sles-iso/install,,,5"
+fi
+
 # Get SLE repositories from the local system
 if [ -n "$ADD_SLE_REPOS" ]; then
     log info "Adding SLE repositories from the local system to the built appliance."
@@ -108,10 +125,14 @@ if [ -n "$ADD_SLE_REPOS" ]; then
         URI="$(echo $l | cut -d'|' -f2)"
 
         # Priority order:
-        #   - SLE repositories
+        #   - SLE repositories if not using a local SLES iso file
         #   - SUSE Package Hub
         #   - Other repositories
         if echo "$l" | grep -q "container-suseconnect-zypp:SLE-"; then
+            if [ -n "$ADD_SLES_ISO" ]; then
+                continue
+            fi
+
             log info "Adding SLE repository $ALIAS"
             KIWI_BUILD_ARGS="$KIWI_BUILD_ARGS --add-repo $URI,,,10"
         elif echo "$l" | grep -q "PackageHub"; then
