@@ -1,0 +1,53 @@
+# Copyright (C) 2026 Savoir-faire Linux, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+name: SEAPATH SLES 16.0 CI Build
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image_type:
+          - standalone
+          - cluster
+          - observer
+        cockpit:
+          - no-cockpit
+          - cockpit
+        exclude:
+          - image_type: observer
+            cockpit: cockpit
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl wget
+
+      - name: Install CQFD
+        run: |
+          sudo apt-get update
+          curl -fsSLo /tmp/cqfd.deb https://github.com/savoirfairelinux/cqfd/releases/download/v5.9.0/cqfd_5.9.0_all.deb
+          sudo apt-get install -y /tmp/cqfd.deb
+
+      - name: Build SLES ${{ matrix.image_type }} / ${{ matrix.cockpit }} image
+        uses: ./.github/actions/build-sles-image
+        with:
+          image_type: ${{ matrix.image_type }}
+          use_cockpit: ${{ matrix.cockpit == 'cockpit' }}
+        env:
+          SLES_USERNAME: ${{ secrets.SLES_USERNAME }}
+          SLES_PASSWORD: ${{ secrets.SLES_PASSWORD }}
+          SLES_TOKEN: ${{ secrets.SLES_TOKEN }}
