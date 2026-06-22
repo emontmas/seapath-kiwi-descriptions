@@ -1,0 +1,64 @@
+name: 'Build SEAPATH SLES image'
+description: 'Builds a SLES image for SEAPATH using CQFD and KIWI'
+inputs:
+  image_type:
+    description: 'Image type, should be standalone, cluster or observer'
+    required: true
+    default: 'standalone'
+  use_cockpit:
+    description: 'Whether to include cockpit in the image'
+    required: false
+    default: 'false'
+runs:
+  using: "composite"
+  steps:
+    - name: Set up SLES credentials
+      shell: bash
+      run: ./.release/set-scccredentials.sh
+
+    - name: Set up SSH keys
+      shell: bash
+      run: |
+        wget https://releases.seapath.org/builds/v2.0.0/seapath-v2.0.0-artifacts-key.pub -P keys
+        cp keys/seapath-v2.0.0-artifacts-key.pub keys/admin_public_ssh_key.pub
+        cp keys/seapath-v2.0.0-artifacts-key.pub keys/ansible_public_ssh_key.pub
+
+    - name: Resolve CQFD flavor
+      id: flavor
+      shell: bash
+      run: |
+        case "${{ inputs.image_type }}:${{ inputs.use_cockpit }}" in
+          standalone:false)
+            echo "flavor=sles16-seapath-hypervisor-standalone" >> "$GITHUB_OUTPUT"
+            ;;
+          standalone:true)
+            echo "flavor=sles16-seapath-hypervisor-standalone-cockpit" >> "$GITHUB_OUTPUT"
+            ;;
+          cluster:false)
+            echo "flavor=sles16-seapath-hypervisor-cluster" >> "$GITHUB_OUTPUT"
+            ;;
+          cluster:true)
+            echo "flavor=sles16-seapath-hypervisor-cluster-cockpit" >> "$GITHUB_OUTPUT"
+            ;;
+          observer:false)
+            echo "flavor=sles16-seapath-observer" >> "$GITHUB_OUTPUT"
+            ;;
+          *)
+            echo "Unsupported image configuration: ${{ inputs.image_type }} / ${{ inputs.use_cockpit }}"
+            exit 1
+            ;;
+        esac
+
+    - name: Initialize CQFD
+      shell: bash
+      run: |
+        echo "::group::Initialize CQFD"
+        cqfd init -b "${{ steps.flavor.outputs.flavor }}"
+        echo "::endgroup::"
+
+    - name: Build image
+      shell: bash
+      run: |
+        echo "::group::Build image"
+        cqfd -b "${{ steps.flavor.outputs.flavor }}"
+        echo "::endgroup::"
