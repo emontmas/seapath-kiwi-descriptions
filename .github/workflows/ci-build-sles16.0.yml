@@ -51,3 +51,11 @@ jobs:
           SLES_USERNAME: ${{ secrets.SLES_USERNAME }}
           SLES_PASSWORD: ${{ secrets.SLES_PASSWORD }}
           SLES_TOKEN: ${{ secrets.SLES_TOKEN }}
+
+      - name: Upload build logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: kiwi-logs-${{ matrix.image_type }}-${{ matrix.cockpit }}-${{ github.run_id }}
+          path: build/image-root.log
+          if-no-files-found: ignore
