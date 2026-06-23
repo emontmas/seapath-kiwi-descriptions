@@ -1,0 +1,107 @@
+# Copyright (C) 2026 Savoir-faire Linux, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Build and Upload to S3
+run-name: Build ${{ inputs.build_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        type: string
+        required: false
+        description: >-
+          Build identifier for organizing artifacts in S3.
+          If not provided, defaults to current timestamp (YYYY-MM-DD/HH-MM-SS).
+
+jobs:
+
+  set-build-id:
+    runs-on: ubuntu-latest
+    outputs:
+      resolved_build_id: ${{ steps.resolve-build-id.outputs.resolved_build_id }}
+    steps:
+      - name: Resolve Build ID
+        id: resolve-build-id
+        run: |
+          if [ -z '${{ inputs.build_id }}' ]; then
+            echo "resolved_build_id=$(date +%F-%H-%M-%S)" >> "$GITHUB_OUTPUT"
+          else
+            echo "resolved_build_id=${{ inputs.build_id }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    runs-on: ubuntu-latest
+    needs: set-build-id
+    strategy:
+      fail-fast: false
+      matrix:
+        image_type:
+          - standalone
+          - cluster
+          - observer
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl jq wget
+
+      - name: Install CQFD
+        run: |
+          sudo apt-get update
+          curl -fsSLo /tmp/cqfd.deb https://github.com/savoirfairelinux/cqfd/releases/download/v5.9.0/cqfd_5.9.0_all.deb
+          sudo apt-get install -y /tmp/cqfd.deb
+
+      - name: Build SLES ${{ matrix.image_type }} image
+        uses: ./.github/actions/build-sles-image
+        with:
+          image_type: ${{ matrix.image_type }}
+          use_cockpit: ${{ matrix.image_type != 'observer' }}
+        env:
+          SLES_USERNAME: ${{ secrets.SLES_USERNAME }}
+          SLES_PASSWORD: ${{ secrets.SLES_PASSWORD }}
+          SLES_TOKEN: ${{ secrets.SLES_TOKEN }}
+
+      - name: Upload build logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: kiwi-logs-${{ matrix.image_type }}-${{ matrix.cockpit }}-${{ github.run_id }}
+          path: build/image-root.log
+          if-no-files-found: ignore
+
+      - name: Prepare release artifacts
+        run: |
+          mkdir -p release-files
+
+          BUILD_ID="${{ needs.set-build-id.outputs.resolved_build_id }}"
+          SRC_IMAGE_FILE_BASE="$(jq -re .disk_image.filename kiwi.result.json)"
+          DST_IMAGE_FILE_BASE="seapath-${BUILD_ID}-sles-${{ matrix.image_type }}.rootfs.raw"
+
+          mv ${SRC_IMAGE_FILE_BASE}.bmap release-files/${DST_IMAGE_FILE_BASE}.bmap
+          mv ${SRC_IMAGE_FILE_BASE}.gz release-files/${DST_IMAGE_FILE_BASE}.gz
+
+      - name: Upload to S3
+        env:
+          S3CMD_ACCESS_KEY: ${{ secrets.S3CMD_ACCESS_KEY }}
+          S3CMD_SECRET_KEY: ${{ secrets.S3CMD_SECRET_KEY }}
+          S3_BUCKET: s3://seapath-releases
+          S3_HOST: e1e604922c4057433cbe77d3700ac51c.r2.cloudflarestorage.com
+          S3_HOST_BUCKET: "%(bucket)s.e1e604922c4057433cbe77d3700ac51c.r2.cloudflarestorage.com"
+        run: |
+          which s3cmd || pip install s3cmd
+
+          s3cmd \
+            --access_key=${S3CMD_ACCESS_KEY} \
+            --secret_key=${S3CMD_SECRET_KEY} \
+            --host=${S3_HOST} \
+            --host-bucket=${S3_HOST_BUCKET} \
+            sync release-files/ "${S3_BUCKET}/builds/${BUILD_ID}/"
+
+          echo "Version: ${BUILD_ID}"
+          echo "Bucket: ${S3_BUCKET}"
+          ls -lah "$UPLOAD_DIR/"
